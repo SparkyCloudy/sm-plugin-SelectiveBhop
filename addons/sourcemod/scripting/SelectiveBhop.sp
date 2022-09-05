@@ -3,14 +3,24 @@
 
 #include <sourcemod>
 #include <sdkhooks>
+#include <sdktools>
 #include <PhysHooks>
 #include <SelectiveBhop>
 #include <multicolors>
 #tryinclude <zombiereloaded>
 
+
+
 ConVar g_CVar_sv_enablebunnyhopping;
 #if defined _zr_included
+float g_fZombieVelocity;
+float g_fHumanVelocity;
+bool g_bBhopVelocity;
+
 ConVar g_CVar_zr_disablebunnyhopping;
+ConVar g_CVar_zr_bhopvelocity;
+ConVar gCV_ZombieVelocity;
+ConVar gCV_HumanVelocity;
 #endif
 
 enum
@@ -36,9 +46,9 @@ StringMap g_ClientLimitedCache;
 public Plugin myinfo =
 {
 	name = "Selective Bunnyhop",
-	author = "BotoX + .Rushaway",
-	description = "Disables bunnyhop on certain players/groups",
-	version = "0.3"
+	author = "BotoX + .Rushaway + Sparky",
+	description = "Disables bunnyhop on certain players/groups or Limited velocity bunnyhop on certain groups",
+	version = "0.4"
 }
 
 public void OnPluginStart()
@@ -52,9 +62,23 @@ public void OnPluginStart()
 	g_bEnabled = g_CVar_sv_enablebunnyhopping.BoolValue;
 
 #if defined _zr_included
+	HookEvent("player_jump", OnPlayerJump);
+
+	g_CVar_zr_bhopvelocity = CreateConVar("zr_bhopvelocity_enable", "1", "Enable or Disable the plugin.", _, true, 0.0, true, 1.0);
+	g_bBhopVelocity = g_CVar_zr_bhopvelocity.BoolValue;
+
 	g_CVar_zr_disablebunnyhopping = CreateConVar("zr_disablebunnyhopping", "0", "Disable bhop for zombies.", FCVAR_NOTIFY);
-	g_CVar_zr_disablebunnyhopping.AddChangeHook(OnConVarChanged);
 	g_bZombieEnabled = g_CVar_zr_disablebunnyhopping.BoolValue;
+
+	gCV_ZombieVelocity = CreateConVar("zr_bhopvelocity_zombies", "300", "Maximum zombies velocity to keep per jump. (min. 300)", _, true, 300.0);
+	gCV_HumanVelocity = CreateConVar("zr_bhopvelocity_humans", "300", "Maximum humans velocity to keep per jump. (min. 300)", _, true, 300.0);
+
+	g_CVar_zr_bhopvelocity.AddChangeHook(OnConVarChanged);
+	g_CVar_zr_disablebunnyhopping.AddChangeHook(OnConVarChanged);
+	gCV_ZombieVelocity.AddChangeHook(OnConVarChanged);
+	gCV_HumanVelocity.AddChangeHook(OnConVarChanged);
+
+	AutoExecConfig();
 #endif
 
 	g_ClientLimitedCache = new StringMap();
@@ -161,6 +185,9 @@ public void OnConVarChanged(ConVar convar, const char[] oldValue, const char[] n
 		g_bZombieEnabled = convar.BoolValue;
 		UpdateLimitedFlags();
 	}
+	g_bBhopVelocity = g_CVar_zr_bhopvelocity.BoolValue;
+	g_fZombieVelocity = gCV_ZombieVelocity.FloatValue;
+	g_fHumanVelocity = gCV_HumanVelocity.FloatValue;
 #endif
 }
 
@@ -211,6 +238,20 @@ public void ZR_OnClientRespawned(int client, ZR_RespawnCondition condition)
 		RemoveLimitedFlag(client, LIMITED_ZOMBIE);
 	else
 		AddLimitedFlag(client, LIMITED_ZOMBIE);
+}
+
+public void OnPlayerJump(Event event, const char[] name, bool dontBroadcast)
+{
+	int client = GetClientOfUserId(event.GetInt("userid"));
+	
+	if(!g_bBhopVelocity)
+	{
+		return;
+	}
+	else
+	{
+		RequestFrame(MaxBhopClient, client);
+	}
 }
 #endif
 
@@ -304,13 +345,13 @@ public Action Command_Bhop(int client, int argc)
 {
 	if (!client)
 	{
-		CPrintToServer("{green}[SM] {default}Cannot use command from server console.");
+		PrintToServer("[SM] Cannot use command from server console.");
 		return Plugin_Handled;
 	}
 
 	if(argc < 2)
 	{
-		CReplyToCommand(client, "{green}[SM] {default}Usage: sm_bhop <#userid|name> <0|1>");
+		ReplyToCommand(client, "[SM] Usage: sm_bhop <#userid|name> <0|1>");
 		return Plugin_Handled;
 	}
 
@@ -341,12 +382,12 @@ public Action Command_Bhop(int client, int argc)
 			AddLimitedFlag(iTargets[i], LIMITED_GENERAL);
 	}
 
-	CShowActivity2(client, "{green}[SM]{olive} ", "{default}Bunnyhop on target {olive}%s {default}has been {green}%s", sTargetName, bValue ? "Un-Restricted" : "Limited");
+	ShowActivity2(client, "[SM] {olive}", "{default}Bunnyhop on target {olive}%s {default}has been %s", sTargetName, bValue ? "{green}Un-Restricted" : "{red}Limited");
 
 	if(iTargetCount > 1)
-		LogAction(client, -1, "\"%L\" %s bunnyhop on target \"%s\"", client, bValue ? "Un-Restricted" : "Limited", sTargetName);
+		LogAction(client, -1, "\"%L\" %s bunnyhop on target \"%s\"", client, bValue ? "{green}Un-Restricted" : "{red}Limited", sTargetName);
 	else
-		LogAction(client, iTargets[0], "\"%L\" %s bunnyhop on target \"%L\"", client, bValue ? "Un-Restricted" : "Limited", iTargets[0]);
+		LogAction(client, iTargets[0], "\"%L\" %s bunnyhop on target \"%L\"", client, bValue ? "{green}Un-Restricted" : "{red}Limited", iTargets[0]);
 
 	return Plugin_Handled;
 }
@@ -355,7 +396,7 @@ public Action Command_Status(int client, int argc)
 {
 	if (!client)
 	{
-		CPrintToServer("{green}[SM] {default}Cannot use command from server console.");
+		CPrintToServer("[SM] Cannot use command from server console.");
 		return Plugin_Handled;
 	}
 
@@ -370,12 +411,12 @@ public Action Command_Status(int client, int argc)
 
 		if(IsBhopLimited(target))
 		{
-			CReplyToCommand(client, "{green}[SM] {olive}%N {default}bhop is currently : {red}Limited", target);
+			ReplyToCommand(client, "[SM] {olive}%N {default}bhop is currently : {red}Limited", target);
 			return Plugin_Handled;
 		}
 		else
 		{
-			CReplyToCommand(client, "{green}[SM] {olive}%N {default}bhop is currently : {green}Not Restricted", target);
+			ReplyToCommand(client, "[SM] {olive}%N {default}bhop is currently : {green}Not Restricted", target);
 			return Plugin_Handled;
 		}
 	}
@@ -383,12 +424,12 @@ public Action Command_Status(int client, int argc)
 	{
 		if(IsBhopLimited(client))
 		{
-			CReplyToCommand(client, "{green}[SM] {default}Your bhop is currently : {red}Limited");
+			ReplyToCommand(client, "[SM] Your bhop is currently : {red}Limited");
 			return Plugin_Handled;
 		}
 		else
 		{
-			CReplyToCommand(client, "{green}[SM] {default}Your bhop is currently : {green}Not restricted");
+			ReplyToCommand(client, "[SM] Your bhop is currently : {green}Not restricted");
 			return Plugin_Handled;
 		}
 	}
@@ -439,3 +480,52 @@ public int Native_IsBhopLimited(Handle plugin, int numParams)
 
 	return LimitedFlag != LIMITED_NONE;
 }
+
+#if defined _zr_included
+void MaxBhopClient(int client)
+{
+	if(ZR_IsClientZombie(client) && IsClientInGame(client))
+	{
+		float fZombieAbsVelocity[3];
+		GetEntPropVector(client, Prop_Data, "m_vecAbsVelocity", fZombieAbsVelocity);
+		
+		float fZombieCurrentSpeed = SquareRoot(Pow(fZombieAbsVelocity[0], 2.0) + Pow(fZombieAbsVelocity[1], 2.0));
+		
+		if(fZombieCurrentSpeed > 0.0)
+		{
+			float fZombieMax = g_fZombieVelocity;
+			
+			if(fZombieCurrentSpeed > fZombieMax)
+			{
+				float x = fZombieCurrentSpeed / fZombieMax;
+				fZombieAbsVelocity[0] /= x;
+				fZombieAbsVelocity[1] /= x;
+				
+				TeleportEntity(client, NULL_VECTOR, NULL_VECTOR, fZombieAbsVelocity);
+			}
+		}
+	}
+	
+	if(ZR_IsClientHuman(client) && IsClientInGame(client))
+	{
+		float fHumanAbsVelocity[3];
+		GetEntPropVector(client, Prop_Data, "m_vecAbsVelocity", fHumanAbsVelocity);
+		
+		float fHumanCurrentSpeed = SquareRoot(Pow(fHumanAbsVelocity[0], 2.0) + Pow(fHumanAbsVelocity[1], 2.0));
+		
+		if(fHumanCurrentSpeed > 0.0)
+		{
+			float fHumanMax = g_fHumanVelocity;
+			
+			if(fHumanCurrentSpeed > fHumanMax)
+			{
+				float x = fHumanCurrentSpeed / fHumanMax;
+				fHumanAbsVelocity[0] /= x;
+				fHumanAbsVelocity[1] /= x;
+				
+				TeleportEntity(client, NULL_VECTOR, NULL_VECTOR, fHumanAbsVelocity);
+			}
+		}
+	}
+}
+#endif
